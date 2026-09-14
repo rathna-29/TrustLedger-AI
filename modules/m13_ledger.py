@@ -32,6 +32,8 @@ def verify_chain(conn) -> bool:
     rows = conn.execute("SELECT * FROM audit_log ORDER BY log_id ASC").fetchall()
     prev_hash = None
     for row in rows:
+        if row["prev_hash"] != prev_hash:
+            return False
         expected = compute_entry_hash(prev_hash, json.loads(row["entry_json"]))
         if expected != row["entry_hash"]:
             return False

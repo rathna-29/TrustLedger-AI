@@ -1,41 +1,22 @@
 """TrustLedger-AI -- Risk-Aware Autonomy Layer for Financial AI Agents.
-Flask app entrypoint. Run with: python app.py
-"""
 
+Thin WSGI entrypoint. All construction lives in :func:`application.create_app`
+(see application/__init__.py) so the same app can be run by Flask's built-in
+server, waitress, or gunicorn without duplicating factory logic.
+
+Run (dev):   python app.py
+Run (prod):  waitress-serve --port=5000 --call application:create_app
+"""
 import os
 
-from flask import Flask, jsonify, redirect
+from application import create_app
 
-from database.db import init_db, DB_PATH
-from routes.agent_routes import agent_bp
-from routes.dashboard_routes import dashboard_bp
-from routes.review_routes import review_bp
-from utils.scenarios import SCENARIOS
-
-app = Flask(__name__)
-app.register_blueprint(agent_bp)
-app.register_blueprint(dashboard_bp)
-app.register_blueprint(review_bp)
-
-
-@app.route("/")
-def index():
-    return redirect("/dashboard")
-
-
-@app.route("/api/scenarios")
-def api_scenarios():
-    """Lets the dashboard fire pre-built demo scenarios with one click."""
-    return jsonify(SCENARIOS)
-
-
-@app.route("/healthz")
-def healthz():
-    return jsonify({"status": "ok", "service": "TrustLedger-AI"})
-
+app = create_app()
 
 if __name__ == "__main__":
-    if not os.path.exists(DB_PATH):
-        print("[TrustLedger-AI] No database found -- run `python database/seed_data.py` first!")
-    port = int(os.environ.get("FLASK_PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    if not os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), "app.db")):
+        print("[TrustLedger-AI] No database found -- run `venv/bin/python database/seed_data.py` first!")
+        print("                 (this also prints the demo agent tokens you'll use in scenario clicks.)")
+    port = int(os.environ.get("FLASK_PORT", "5000"))
+    debug = os.environ.get("FLASK_DEBUG", "1").lower() in ("1", "true", "yes")
+    app.run(host="0.0.0.0", port=port, debug=debug)

@@ -9,7 +9,11 @@ from datetime import datetime
 
 def update_baseline(conn, agent_id: str):
     rows = conn.execute(
-        "SELECT amount FROM transactions WHERE agent_id = ? ORDER BY created_at DESC LIMIT 50",
+        """SELECT t.amount
+           FROM transactions t
+           JOIN decisions d ON t.txn_id = d.txn_id
+           WHERE t.agent_id = ? AND d.decision IN ('EXECUTE', 'CONSTRAIN')
+           ORDER BY t.created_at DESC LIMIT 50""",
         (agent_id,),
     ).fetchall()
     amounts = [r["amount"] for r in rows]

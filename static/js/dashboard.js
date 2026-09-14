@@ -1,172 +1,336 @@
-const $ = (sel) => document.querySelector(sel);
+"use strict";
+const $ = (sel, root) => (root || document).querySelector(sel);
+const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
+const esc = (s) =>
+  String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+const MONO = (s) => `<span class="mono">${esc(s)}</span>`;
 
-async function fetchJSON(url, opts) {
+const DECISION_ORDER = [
+  { key: "EXECUTE", id: "kpiExec" },
+  { key: "CONSTRAIN", id: "kpiConstrain" },
+  { key: "ESCALATE", id: "kpiEscalate" },
+  { key: "BLOCK", id: "kpiBlock" },
+];
+const DECISION_COLORS = {
+  EXECUTE: "#3ddc97",
+  CONSTRAIN: "#ffb454",
+  ESCALATE: "#f66f7a",
+  BLOCK: "#f0163f",
+};
+const RISK_COLOR = (n) => (n < 25 ? "#3ddc97" : n < 50 ? "#ffb454" : n < 75 ? "#f66f7a" : "#f0163f");
+
+async function jfetch(url, opts) {
   const res = await fetch(url, opts);
-  return res.json();
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((data && data.error) || res.statusText);
+  return data;
 }
-
-function badge(decision) {
-  return `<span class="badge ${decision}">${decision}</span>`;
-}
-
-async function loadScenarios() {
-  const scenarios = await fetchJSON("/api/scenarios");
-  const container = $("#scenarioButtons");
-  container.innerHTML = "";
-  Object.entries(scenarios).forEach(([key, s]) => {
-    const btn = document.createElement("button");
-    btn.className = "scenario-btn";
-    btn.innerHTML = `${key.replace(/_/g, " ")}<span class="exp">expects: ${s.expected}</span>`;
-    btn.onclick = () => runScenario(key, s);
-    container.appendChild(btn);
-  });
-}
-
-async function runScenario(key, scenario) {
-  $("#scenarioResult").textContent = `Running ${key}...`;
-  const result = await fetchJSON("/agent/intent", {
+async function jpost(url, body) {
+  return jfetch(url, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${scenario.token}`,
-    },
-    body: JSON.stringify(scenario.payload),
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body || {}),
   });
-  $("#scenarioResult").textContent = JSON.stringify(result, null, 2);
-  refreshAll();
 }
 
-async function loadOverview() {
-  const data = await fetchJSON("/api/overview");
+function showToast(msg, kind) {
+  let t = $("#toast");
+  if (!t) {
+    t = document.createElement("div");
+    t.id = "toast";
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.className = "toast " + (kind || "info");
+  clearTimeout(t._h);
+  t._h = setTimeout(() => (t.className = "toast"), 2600);
+}
+
+/* ========================================================= */
+/*  KPI overview                                             */
+/* ========================================================= */
+async function loadKs() {
+  const d = await jfetch("/api/overview");
+  const dist = d.decision_distribution || {};
+  const total = DECISION_ORDER.reduce((a, k) => a + (dist[k.key] || 0), 0) || 1;
+
+  DECISION_ORDER.forEach((it) => {
+    const card = $("#" + it.id);
+    if (!card) return;
+    const num = card.querySelector(".kpi-num");
+    const bar = card.querySelector(".kpi-track i");
+    if (num) num.textContent = dist[it.key] || 0;
+    if (bar) {
+      bar.style.width = Math.round(((dist[it.key] || 0) / total) * 100) + "%";
+      bar.style.background = it.color || DECISION_COLORS[it.key];
+    }
+  });
+
+  const rate = Math.round((d.escalation_rate || 0) * 10) / 10;
+  const rk = $("#kpiRate");
+  if (rk) {
+    const rn = rk.querySelector(".kpi-num");
+    if (rn) {
+      rn.textContent = rate + "%";
+      rn.style.color = RISK_COLOR(rate * 5);
+    }
+    const rb = rk.querySelector(".kpi-track i");
+    if (rb) {
+      rb.style.width = Math.min(100, rate) + "%";
+      rb.style.background = RISK_COLOR(rate * 5);
+    }
+  }
+
   const pill = $("#ledgerStatus");
-  pill.textContent = data.ledger_integrity_ok ? "Ledger: intact ✓" : "Ledger: TAMPERED";
-  pill.className = "ledger-pill " + (data.ledger_integrity_ok ? "ok" : "bad");
+  if (pill) {
+    pill.textContent = d.ledger_integrity_ok ? "Ledger: verified" : "Ledger: TAMPERED";
+    pill.className = "ledger-pill " + (d.ledger_integrity_ok ? "ok" : "bad");
+  }
 
-  const dist = data.decision_distribution || {};
-  const stats = [
-    ["EXECUTE", dist.EXECUTE || 0],
-    ["CONSTRAIN", dist.CONSTRAIN || 0],
-    ["ESCALATE", dist.ESCALATE || 0],
-    ["BLOCK", dist.BLOCK || 0],
-  ];
-  $("#overviewStats").innerHTML = stats.map(([label, val]) => `
-    <div class="stat-card">
-      <div class="num">${val}</div>
-      <div class="lbl">${label}</div>
-    </div>`).join("") + `
-    <div class="stat-card" style="grid-column: span 4">
-      <div class="num">${data.escalation_rate}%</div>
-      <div class="lbl">Escalation rate</div>
-    </div>`;
-
-  renderIncidentChart(data.agent_incidents || []);
+  const ts = $("#lastUpdated");
+  if (ts) ts.textContent = new Date().toLocaleTimeString();
+  return d;
 }
 
-let incidentChart;
-function renderIncidentChart(rows) {
-  const ctx = $("#incidentChart");
-  const labels = rows.map(r => r.agent_id);
-  const values = rows.map(r => r.incident_count);
-  if (incidentChart) incidentChart.destroy();
-  incidentChart = new Chart(ctx, {
-    type: "bar",
-    data: {
-      labels: labels.length ? labels : ["No incidents yet"],
-      datasets: [{
-        label: "Incidents",
-        data: values.length ? values : [0],
-        backgroundColor: "#e5484d",
-      }],
-    },
-    options: {
-      plugins: { legend: { display: false } },
-      scales: {
-        x: { ticks: { color: "#8b98a5" }, grid: { color: "#1a222c" } },
-        y: { ticks: { color: "#8b98a5" }, grid: { color: "#1a222c" }, beginAtZero: true },
-      },
-    },
-  });
+/* ========================================================= */
+/*  Scenario buttons + run                                   */
+/* ========================================================= */
+async function loadScenarios() {
+  const d = await jfetch("/api/scenarios");
+  const wrap = $("#scenarioButtons");
+  if (!wrap) return;
+  wrap.innerHTML = Object.keys(d || {})
+    .map((k) => `<button type="button" class="scenario-chip" data-key="${esc(k)}">${esc((d[k] && d[k].short) || k)}</button>`)
+    .join("");
+  wrap.querySelectorAll(".scenario-chip").forEach((b) =>
+    b.addEventListener("click", () => runScenario(b.dataset.key))
+  );
 }
 
-async function loadTransactions() {
-  const rows = await fetchJSON("/api/transactions");
-  const tbody = $("#txnTable tbody");
-  tbody.innerHTML = rows.map(r => `
-    <tr>
-      <td>${r.txn_id || "-"}</td>
-      <td>${r.agent_id}</td>
-      <td>${r.currency} ${r.amount.toLocaleString()}</td>
-      <td>${r.counterparty_id || "-"}</td>
-      <td>${r.risk_score ?? "-"}</td>
-      <td>${badge(r.decision || "BLOCK")}</td>
-    </tr>`).join("") || `<tr><td colspan="6" class="empty-state">No transactions yet — run a scenario above.</td></tr>`;
+async function runScenario(key) {
+  const out = $("#scenarioResult");
+  if (out) {
+    out.className = "scenario-result pending";
+    out.textContent = "Tracing through 15 modules...";
+  }
+  try {
+    const d = await jfetch("/api/scenarios");
+    const s = d[key];
+    if (!s) throw new Error("unknown scenario: " + key);
+    const r = await jpost("/agent/intent", {
+      payload: s.payload,
+      token: s.token,
+    });
+    renderResult(r([[esc(r.decision)]]));
+    renderPipeline(r);
+    refreshAll();
+  } catch (err) {
+    if (out) {
+      out.className = "scenario-result error";
+      out.textContent = "Scenario failed: " + err.message;
+    }
+  }
+}
+
+function renderResult(r) {
+  const out = $("#scenarioResult");
+  if (!out) return;
+  out.className = "scenario-result show";
+  out.innerHTML = `<div class="sr-decision" style="color:${DECISION_COLORS[r.decision] || "#fff"}">${esc(r.decision)}</div>
+    <div class="sr-meta">risk ${Math.round(r.risk_score || 0)} · ${esc(r.reason || "")}</div>
+    <pre class="sr-body">${esc(JSON.stringify(r.evidence || {}, null, 2))}</pre>`;
+}
+
+function renderPipeline(r) {
+  const stages = (r.pipeline_stages || []).map(
+    (s) => `<div class="stage-chip s-${esc(s.level || "ok")}">
+      <span class="s-label">${esc(s.label || "")}</span>
+      <span class="s-detail">${esc(s.detail || "")}</span>
+    </div>`
+  ).join("");
+  const grid = $("#pipelineStages");
+  if (grid) grid.innerHTML = stages || `<div class="stage-chip idle">No trace yet</div>`;
+
+  const banner = $("#pipelineBiz");
+  if (banner) {
+    banner.className = "banner " + ((r.pipeline_stages || []).length ? "show" : "empty");
+    banner.textContent = (r.pipeline_stages || []).length
+      ? `${r.pipeline_stages.length} modules traced · ledger ${r.ledger_hash ? "sealed" : "pending"}`
+      : "Run a scenario to trace the security loop through all 15 modules.";
+  }
+}
+
+/* ========================================================= */
+/*  Tables: transactions + agents                            */
+/* ========================================================= */
+async function loadTxns() {
+  const rows = await jfetch("/api/transactions");
+  const tb = $("#txnTable tbody");
+  if (!tb) return;
+  tb.innerHTML = (rows || [])
+    .slice(0, 30)
+    .map((r) => `<tr>
+        <td class="mono">${esc(r.txn_id || "-")}</td>
+        <td>${esc(r.agent_id || "-")}</td>
+        <td class="mono">${money(r.amount_sats)}</td>
+        <td class="mono">${esc(r.counterparty || "-")}</td>
+        <td><span class="risk-cell" style="color:${RISK_COLOR(r.risk_score)}">${Math.round(r.risk_score || 0)}</span></td>
+        <td><span class="dec-cell" style="color:${DECISION_COLORS[r.decision] || "#aaa"}">${esc(r.decision || "-")}</span></td>
+      </tr>`)
+    .join("");
+}
+
+function money(sat) {
+  return ((Number(sat) || 0) / 1e8).toFixed(2);
 }
 
 async function loadAgents() {
-  const rows = await fetchJSON("/api/agents");
-  const tbody = $("#agentTable tbody");
-  tbody.innerHTML = rows.map(r => `
-    <tr>
-      <td>${r.agent_id}</td>
-      <td>${r.role_id}</td>
-      <td>₹${Math.round(r.mean_amount || 0).toLocaleString()} ± ${Math.round(r.std_amount || 0).toLocaleString()}</td>
-      <td>₹${(r.daily_spent || 0).toLocaleString()}</td>
-      <td>${r.txn_count_today || 0}</td>
-    </tr>`).join("");
+  const rows = await jfetch("/api/agents");
+  const tb = $("#agentTable tbody");
+  if (!tb) return;
+  tb.innerHTML = (rows || [])
+    .map((a) => `<tr>
+        <td class="mono">${esc(a.agent_id || "-")}</td>
+        <td>${esc(a.role || "-")}</td>
+        <td class="mono">${esc(a.baseline || "-")}</td>
+        <td class="mono">${money(a.today_spent)}</td>
+        <td>${a.txn_count || 0}</td>
+      </tr>`)
+    .join("");
 }
 
-async function loadReviewQueue() {
-  const rows = await fetchJSON("/api/review-queue");
-  const container = $("#reviewList");
-  container.innerHTML = rows.map(r => `
-    <div class="review-item">
-      <div class="row"><strong>${r.txn_id}</strong><span>risk ${r.risk_score}</span></div>
-      <div>${r.agent_id} → ${r.counterparty_id} · ${r.amount}</div>
-      <div style="color:#8b98a5">${r.reason}</div>
-      <div class="actions">
-        <button class="btn-approve" onclick="reviewTxn('${r.txn_id}', 'approve')">Approve</button>
-        <button class="btn-reject" onclick="reviewTxn('${r.txn_id}', 'reject')">Reject</button>
-      </div>
-    </div>`).join("") || `<div class="empty-state">No pending human review.</div>`;
+/* ========================================================= */
+/*  Review queue + blocked                                   */
+/* ========================================================= */
+async function loadReview() {
+  const rows = await jfetch("/api/review-queue");
+  const cnt = $("#reviewCount");
+  if (cnt) cnt.textContent = (rows || []).length + " pending";
+  const list = $("#reviewList");
+  if (!list) return;
+  list.innerHTML = (rows || [])
+    .slice(0, 6)
+    .map((r) => `<div class="rc-card">
+        <div class="rc-top">
+          <span class="mono">${esc(r.txn_id || "-")}</span>
+          <span class="risk-cell" style="color:${RISK_COLOR(r.risk_score)}">${Math.round(r.risk_score || 0)}</span>
+        </div>
+        <div class="rc-sub">${esc(r.agent_id || "")} · ${esc(r.reason || "")}</div>
+        <div class="rc-actions">
+          <button data-id="${esc(r.txn_id)}" data-act="approve">Approve</button>
+          <button data-id="${esc(r.txn_id)}" data-act="escalate">Escalate</button>
+          <button data-id="${esc(r.txn_id)}" data-act="block" class="danger">Block</button>
+        </div>
+      </div>`)
+    .join("");
+  list.querySelectorAll("button").forEach((b) =>
+    b.addEventListener("click", () => resolveReview(b.dataset.act, b.dataset.id))
+  );
 }
 
-async function reviewTxn(txnId, action) {
-  await fetchJSON(`/api/review/${txnId}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action, reviewed_by: "demo_reviewer" }),
-  });
-  refreshAll();
+async function resolveReview(action, txnId) {
+  try {
+    await jpost("/api/review/" + encodeURIComponent(txnId), { action });
+    showToast("Review " + action + ": " + txnId, "ok");
+    await Promise.all([loadReview(), loadBlocked(), loadLedger(), loadKs()]);
+  } catch (err) {
+    showToast("Review failed: " + err.message, "bad");
+  }
 }
-window.reviewTxn = reviewTxn;
 
 async function loadBlocked() {
-  const rows = await fetchJSON("/api/blocked");
-  const container = $("#blockedList");
-  container.innerHTML = rows.map(r => `
-    <div class="blocked-item">
-      <div class="row"><strong>${r.txn_id}</strong><span>risk ${r.risk_score}</span></div>
-      <div>${r.agent_id} → ${r.counterparty_id} · ${r.amount}</div>
-      <div style="color:#8b98a5">${r.reason}</div>
-    </div>`).join("") || `<div class="empty-state">No blocked transactions yet.</div>`;
+  const rows = await jfetch("/api/blocked");
+  const cnt = $("#blockedCount");
+  if (cnt) cnt.textContent = (rows || []).length + " blocked";
+  const list = $("#blockedList");
+  if (list) {
+    list.innerHTML = (rows || [])
+      .slice(0, 6)
+      .map((r) => `<div class="bc-card">${MONO(r.txn_id || "-")} <span class="risk-cell" style="color:${RISK_COLOR(r.risk_score)}">${Math.round(r.risk_score || 0)}</span></div>`)
+      .join("");
+  }
 }
 
+/* ========================================================= */
+/*  Ledger + charts                                          */
+/* ========================================================= */
 async function loadLedger() {
-  const rows = await fetchJSON("/api/ledger");
-  const container = $("#ledgerList");
-  container.innerHTML = rows.map(r => `
-    <div class="ledger-item">
-      #${r.log_id} · ${r.created_at}<br>
-      hash: <span class="hash">${r.entry_hash.slice(0, 24)}...</span>
-    </div>`).join("") || `<div class="empty-state">Ledger is empty.</div>`;
+  const d = await jfetch("/api/ledger");
+  const cnt = $("#ledgerCount");
+  if (cnt) cnt.textContent = (d.ledger || []).length + " entries";
+  const pill = $("#ledgerStatus");
+  if (pill) {
+    pill.textContent = d.integrity_ok ? "Ledger: verified" : "Ledger: TAMPERED";
+    pill.className = "ledger-pill " + (d.integrity_ok ? "ok" : "bad");
+  }
+  const list = $("#ledgerList");
+  if (list) {
+    list.innerHTML = (d.ledger || [])
+      .slice(-8)
+      .reverse()
+      .map((e) => `<div class="ledger-card">
+        <div class="lc-head"><span class="mono">${esc(e.block_id || "-")}</span><span class="mono">${esc((e.hash || "").slice(0, 14))}</span></div>
+        <div class="lc-sub">${esc(e.agent_id || "")} · ${esc(e.decision || "")}</div>
+      </div>`)
+      .join("");
+  }
+}
+
+let mixChart = null;
+let incidentChart = null;
+
+function renderCharts(d) {
+  const dist = d.decision_distribution || {};
+  if (window.Chart) {
+    const labels = ["EXECUTE", "CONSTRAIN", "ESCALATE", "BLOCK"];
+    const values = labels.map((k) => dist[k] || 0);
+    const colors = labels.map((k) => DECISION_COLORS[k]);
+    if (mixChart) mixChart.destroy();
+    const mc = $("#mixChart");
+    if (mc) {
+      mixChart = new Chart(mc.getContext("2d"), {
+        type: "doughnut",
+        data: { labels, datasets: [{ data: values, backgroundColor: colors, borderWidth: 0 }] },
+        options: {
+          plugins: { legend: { display: false } },
+          cutout: "62%",
+        },
+      });
+    }
+  }
 }
 
 async function refreshAll() {
-  await Promise.all([loadOverview(), loadTransactions(), loadAgents(), loadReviewQueue(), loadBlocked(), loadLedger()]);
+  try {
+    const d = await loadKs();
+    await Promise.all([
+      loadTxns(),
+      loadAgents(),
+      loadReview(),
+      loadBlocked(),
+      loadLedger(),
+    ]);
+    renderCharts(d);
+    const ts = $("#lastUpdated");
+    if (ts) ts.textContent = new Date().toLocaleTimeString();
+  } catch (err) {
+    showToast("Refresh failed: " + err.message, "bad");
+  }
 }
 
-$("#refreshBtn").addEventListener("click", refreshAll);
-
-loadScenarios();
-refreshAll();
-setInterval(refreshAll, 8000);
+document.addEventListener("DOMContentLoaded", () => {
+  loadScenarios();
+  refreshAll();
+  const btn = $("#refreshBtn");
+  if (btn) btn.addEventListener("click", refreshAll);
+  const auto = $("#autoRefresh");
+  if (auto) {
+    auto.addEventListener("change", () => {
+      if (auto._t) clearInterval(auto._t);
+      auto._t = auto.checked ? setInterval(refreshAll, 25000) : null;
+    });
+  }
+});

@@ -1,0 +1,17 @@
+# Fixes - TrustLedger-AI
+
+Why each fix is the *correct* fix (not just "it passes the test"). Companion to
+[BUGS.md](BUGS.md).
+
+| ID | Fix | WHY it fixes the bug (root cause -> correction) |
+|----|-----|-------------------------------------------------|
+| BUG-01 | `m13-ledger.verify_chain` now recomputes and compares the hash of EVERY entry against a carried-forward expected hash; any mismatch returns False immediately. | Root cause: verification only checked the tail, so interior rows were not pinned. The fix re-derives the full hash chain in the same order the append logic built it, making every row cryptographically accountable, not just the last one. |
+| BUG-02 | `audit_log` gained `prev_hash` + `entry_hash`; `modules/pipeline` m13 appends blocks that each embed the previous link hash. | Root cause: a ledger with no linkage is a list, and a list cannot prove ordering or absence-of-omission. Chain linkage (each block's hash covers the previous) is what converts "detect if last row changed" into "detect if ANY row changed or was reordered". |
+| BUG-03 | Early rejection now still runs the full 15-stage pipeline and records a complete trace; the rejection reason is attached as evidence. | Root cause: short-circuiting the pipeline after identity failure skipped stages that audit expects to see for every intent. Keeping early-exit *decisions* while preserving full stage *recording* means a blocked intent remains fully auditable without weakening the guard. |
+| BUG-04 | `m14_baseline_update` only mutates the behaviour baseline for EXECUTE / CONSTRAIN decisions. | Root cause: updating baseline on every intent (including rejects) married the *risk model* to the *attempt stream*, so self-adaptation became nondeterministic feedback. Restricting baseline drift to decisions the agent actually posted keeps risk scoring stable and repeatable for everything else. |
+| BUG-05 | `m09_risk_engine` risk score computed from the fixed, seeded evidence with no `random` source; model weights + inputs are the only variables. | Root cause: stochastic scoring is a determinism bug for a *governor* - the same transaction must make the same decision every time it is audited. Removing the RNG makes the score a pure function of (payload, baseline, policy). |
+| BUG-06 | All stage traces now emit a uniform `{level, stage, detail}` triple produced by one builder in the pipeline. | Root cause: per-module builders used divergent key names, so the dashboard contract had no single source of truth. Centralising the stage-record builder fixes every stage at once instead of patching one template at a time. |
+| BUG-07 | In `application/__init__.py` the factory passes explicit `template_folder`/`static_folder` pointed at the repo root. | Root cause: `Flask(__name__)` inside a package resolves Jinja/static search to `<package root>/templates`. Threading the real repo-root paths through the factory preserves the original flat layout contract while enabling the app-factory structure. |
+| BUG-08 | `app.py` detects a missing DB, prints actionable seed instructions (with demo tokens) and `scripts/dev/seed.sh` runs seeding non-interactively; CI seeds before boot. | Root cause: opaque first-run failure. Making the seed path runnable (and CI idempotent) turns "cannot boot" into a 2-command, documented quickstart. |
+
+All eight verified by the regression suite in `tests/` and by the boot smoke test.

@@ -10,70 +10,162 @@
 
 <header class="topbar">
   <div class="brand">
-    <span class="brand-mark">TrustLedger-AI</span>
-    <span class="brand-sub">Decision Governor for Autonomous Money</span>
+    <svg class="brand-logo" viewBox="0 0 32 32" width="30" height="30" aria-hidden="true">
+      <path d="M8 4h12l6 6v14a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V8a4 4 0 0 1 4-4z" fill="none" stroke="currentColor" stroke-width="2"/>
+      <path d="M20 4v6h6" fill="none" stroke="currentColor" stroke-width="2"/>
+      <path d="M11 17l3.2 3.2L21 13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <div class="brand-text">
+      <span class="brand-mark">TrustLedger-AI</span>
+      <span class="brand-sub">Risk-Aware Autonomy for Financial Agents</span>
+    </div>
   </div>
+
   <div class="topbar-actions">
+    <span id="lastUpdated" class="timestamp">—</span>
     <span id="ledgerStatus" class="ledger-pill">Ledger: checking…</span>
-    <button id="refreshBtn" class="btn-ghost">Refresh</button>
+    <label class="auto-toggle" title="Auto-refresh every 8 seconds">
+      <input type="checkbox" id="autoRefresh" checked>
+      <span>Auto</span>
+    </label>
+    <button id="refreshBtn" class="btn-ghost">
+      <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8">
+        <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" stroke-linecap="round"/>
+        <path d="M13.5 2v2.9h-2.9" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      Refresh
+    </button>
   </div>
 </header>
 
 <main class="layout">
 
-  <section class="panel scenarios">
-    <h2>Run a demo scenario</h2>
-    <p class="hint">One-click fires a pre-built intent through all 15 modules.</p>
+  <!-- ============ KPI strip ============ -->
+  <section class="panel kpis" aria-label="Decision overview">
+    <article class="kpi-card kpi-execute">
+      <div class="kpi-top"><span class="kpi-dot"></span><span class="kpi-label">EXECUTE</span></div>
+      <div class="kpi-num" id="kpiExec">0</div>
+      <div class="kpi-track"><i style="width:0%"></i></div>
+    </article>
+    <article class="kpi-card kpi-constrain">
+      <div class="kpi-top"><span class="kpi-dot"></span><span class="kpi-label">CONSTRAIN</span></div>
+      <div class="kpi-num" id="kpiConstrain">0</div>
+      <div class="kpi-track"><i style="width:0%"></i></div>
+    </article>
+    <article class="kpi-card kpi-escalate">
+      <div class="kpi-top"><span class="kpi-dot"></span><span class="kpi-label">ESCALATE</span></div>
+      <div class="kpi-num" id="kpiEscalate">0</div>
+      <div class="kpi-track"><i style="width:0%"></i></div>
+    </article>
+    <article class="kpi-card kpi-block">
+      <div class="kpi-top"><span class="kpi-dot"></span><span class="kpi-label">BLOCK</span></div>
+      <div class="kpi-num" id="kpiBlock">0</div>
+      <div class="kpi-track"><i style="width:0%"></i></div>
+    </article>
+    <article class="kpi-card kpi-rate">
+      <div class="kpi-top"><span class="kpi-label">Escalation rate</span></div>
+      <div class="kpi-num" id="kpiRate">0%</div>
+      <div class="kpi-track"><i style="width:0%"></i></div>
+    </article>
+  </section>
+
+  <!-- ============ Pipeline visualizer ============ -->
+  <section class="panel pipeline" aria-label="Decision pipeline">
+    <div class="panel-head">
+      <h2>Decision pipeline</h2>
+      <span class="sub">15-module governor · last evaluation</span>
+    </div>
+    <div id="pipelineBiz" class="banner empty">Run a scenario to trace the full security loop through all 15 modules.</div>
+    <div id="pipelineStages" class="stage-grid">
+      <div class="stage-chip idle">Waiting for input…</div>
+    </div>
+  </section>
+
+  <!-- ============ Scenario runner ============ -->
+  <section class="panel scenarios" aria-label="Run a demo scenario">
+    <div class="panel-head">
+      <h2>Run a demo scenario</h2>
+      <span class="sub">One-click fires an intent through all 15 modules</span>
+    </div>
     <div id="scenarioButtons" class="scenario-grid"></div>
     <div id="scenarioResult" class="scenario-result"></div>
   </section>
 
-  <section class="panel overview">
-    <h2>Security overview</h2>
-    <div id="overviewStats" class="stat-grid"></div>
+  <!-- ============ Transactions + Review / Blocked ============ -->
+  <section class="panel txns" aria-label="Transaction monitor">
+    <div class="panel-head">
+      <h2>Transaction monitor</h2>
+      <span class="sub">latest 50</span>
+    </div>
+    <div class="table-scroll">
+      <table class="data-table" id="txnTable">
+        <thead>
+          <tr><th>Txn</th><th>Agent</th><th>Amount</th><th>Counterparty</th><th>Risk</th><th>Decision</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
   </section>
 
-  <section class="panel monitor">
-    <h2>Transaction monitor</h2>
-    <table class="data-table" id="txnTable">
-      <thead>
-        <tr><th>Txn</th><th>Agent</th><th>Amount</th><th>Destination</th><th>Risk</th><th>Decision</th></tr>
-      </thead>
-      <tbody></tbody>
-    </table>
+  <div class="rail">
+    <section class="panel review" aria-label="Human review queue">
+      <div class="panel-head">
+        <h2>Human review queue</h2>
+        <span class="sub" id="reviewCount"></span>
+      </div>
+      <div id="reviewList" class="card-list"></div>
+    </section>
+
+    <section class="panel blocked" aria-label="Blocked transactions">
+      <div class="panel-head">
+        <h2>Blocked transactions</h2>
+        <span class="sub" id="blockedCount"></span>
+      </div>
+      <div id="blockedList" class="card-list"></div>
+    </section>
+  </div>
+
+  <!-- ============ Agents + charts ============ -->
+  <section class="panel agents" aria-label="Active agents">
+    <div class="panel-head">
+      <h2>Active agents</h2>
+      <span class="sub">behaviour baselines</span>
+    </div>
+    <div class="table-scroll">
+      <table class="data-table" id="agentTable">
+        <thead>
+          <tr><th>Agent</th><th>Role</th><th>Baseline (μ ± σ)</th><th>Today spent</th><th>Txns</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
   </section>
 
-  <section class="panel agents">
-    <h2>Active agents</h2>
-    <table class="data-table" id="agentTable">
-      <thead>
-        <tr><th>Agent</th><th>Role</th><th>Baseline (μ ± σ)</th><th>Today spent</th><th>Txns today</th></tr>
-      </thead>
-      <tbody></tbody>
-    </table>
+  <section class="panel charts" aria-label="Analytics">
+    <div class="chart-box">
+      <div class="panel-head"><h2>Decision mix</h2></div>
+      <div class="chart-wrap"><canvas id="mixChart"></canvas></div>
+    </div>
+    <div class="chart-box">
+      <div class="panel-head"><h2>Incidents by agent</h2></div>
+      <div class="chart-wrap"><canvas id="incidentChart"></canvas></div>
+    </div>
   </section>
 
-  <section class="panel review">
-    <h2>Human review queue</h2>
-    <div id="reviewList" class="review-list"></div>
-  </section>
-
-  <section class="panel blocked">
-    <h2>Blocked transactions</h2>
-    <div id="blockedList" class="blocked-list"></div>
-  </section>
-
-  <section class="panel incidents">
-    <h2>Incident counts by agent</h2>
-    <canvas id="incidentChart" height="140"></canvas>
-  </section>
-
-  <section class="panel ledger">
-    <h2>Immutable audit ledger</h2>
-    <div id="ledgerList" class="ledger-list"></div>
+  <!-- ============ Ledger ============ -->
+  <section class="panel ledger" aria-label="Immutable audit ledger">
+    <div class="panel-head">
+      <h2>Immutable audit ledger</h2>
+      <span class="sub" id="ledgerCount"></span>
+    </div>
+    <div id="ledgerList" class="ledger-chain"></div>
   </section>
 
 </main>
+
+<footer class="site-footer">
+  TrustLedger-AI · Decision Governor for Autonomous Money · all transactions simulated
+</footer>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
 <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>

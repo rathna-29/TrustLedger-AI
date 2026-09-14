@@ -1,66 +1,113 @@
-# TrustLedger-AI — Risk-Aware Autonomy Layer for Financial AI Agents
+# TrustLedger-AI
 
-A working hackathon prototype of the 15-module Decision Governor architecture.
-All financial transactions are **simulated** — nothing here touches a real
-bank account, wallet, or blockchain.
+**The Trust Ledger for Financial AI Agents**
 
-See `PROJECT_DOCUMENTATION.md` (in the parent folder / provided separately)
-for the full write-up: problem statement, architecture, risk-scoring
-methodology, AI/ML component breakdown, database design, demo script, and
-judge Q&A.
+A risk-aware autonomy layer that sits between a financial AI agent and the
+moment it spends money. Every agent decision is scored across **15 risk stages**
+(identity, behaviour drift, semantic manipulation, man-in-the-middle wallet
+risk, liquidity, velocity, chain-of-commitment, chain-of-custody, ledger
+integrity, baseline stability) and passed through the **Decision Governor**
+(BLOCK / EXECUTE / ESCALATE) before any action is committed.
 
-## Quick start
+> **Disclaimer:** this is a hackathon prototype. Every transaction is
+> simulated against local synthetic data. Nothing touches a real bank account,
+> wallet, or blockchain.
 
-```bash
-cd financial-agent-security
-python -m venv venv
-source venv/bin/activate        # Windows: venv\Scripts\activate
-pip install -r requirements.txt
+---
 
-cp .env.example .env             # then edit if you want to set a real JWT_SECRET
+## Highlights
 
-python database/seed_data.py     # creates app.db with demo agents/roles/policies
-python app.py                    # starts the server on http://localhost:5000
+- **15-stage decision pipeline** with auditor-grade per-stage traces
+- **Decision Governor** with BLOCK / EXECUTE / ESCALATE and human-in-the-loop
+  review queue
+- **Tamper-evident local ledger** - chained hashes, chain-integrity
+  verification, anyone-can-verify
+- **ML augmentation**: behavioural anomaly scoring + semantic manipulation
+  detection (scikit-learn based, deterministic by default)
+- **Deterministic by default** - same scenario always yields the same verdict
+  (seed fixed, RNG seeded), so demos and tests never flake
+- **Write-audited decisions** - only EXECUTE / CONSTRAIN closed-loop actions
+  count toward risk-model baseline updates
+- **One-click scenarios** - the dashboard fires pre-built demo scenarios so you
+  never need to click through 15 stages by hand
+
+## Architecture at a glance
+
+```
+                 +--------------- dashboard / templates (Bootstrap 5)
+                 |                      |
+ Agent POST      |                      |
+ /agent/intent --+----> routes/ ------>  modules/ (m01..m15, pipeline)
+                 |                      |
+                 +----> ml/  behaviour_model, manipulation_llm
+                 |                      |
+                 +----> security/  crypto, ledger, jwt
+                 |                      |
+                 +----> database/  sqlite schema + seed
 ```
 
-Open **http://localhost:5000/dashboard** — click any of the scenario buttons
-at the top to fire a pre-built financial-agent intent through all 15 modules
-and watch it land as EXECUTE / CONSTRAIN / ESCALATE / BLOCK in real time.
+The full write-up lives in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
-## Calling the API directly
+## Quick start (dev)
 
 ```bash
-curl -X POST http://localhost:5000/agent/intent \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer demo-token-payments-07" \
-  -d '{
-        "agent_id": "AP_Payments_Agent_07",
-        "action_type": "transfer",
-        "amount": 5000,
-        "currency": "INR",
-        "destination": "Vendor_Kumar",
-        "instruction": "Transfer INR 5000 to our approved supplier for the June invoice."
-      }'
+# 1. virtualenv + deps
+python3 -m venv venv
+./venv/bin/pip install -r requirements/base.txt
+
+# 2. seed the demo database (prints agent tokens you'll use in the demo)
+./venv/bin/python database/seed_data.py
+
+# 3. run
+./venv/bin/python app.py
+# -> http://localhost:5000/dashboard
 ```
 
-Demo agent tokens (also printed by `seed_data.py`):
+> pytest is available under `requirements/dev.txt`; CI runs tests + a boot
+> smoke check on every push (see `.github/workflows/ci.yml`).
 
-| Agent | Token |
-|---|---|
-| AP_Payments_Agent_07 | `demo-token-payments-07` |
-| Treasury_Rebalancer_01 | `demo-token-treasury-01` |
-| DeFi_Yield_Agent_03 | `demo-token-defi-03` |
+## Demo checklist (30-second run)
+
+1. Open `http://localhost:5000/dashboard`
+2. Click a **scenario chip** (e.g. "Suspicious large transfer")
+3. The pipeline board animates the 15 stages live
+4. A decision lands in **Review queue** or **Blocked** - click it to see the
+   per-stage audit trail
+5. Check the **Ledger integrity** panel: tamper with a row and the chain
+   verification immediately reports `NOT_INTACT`
 
 ## Project layout
 
-See `PROJECT_DOCUMENTATION.md` Part 19 for the full annotated folder
-structure. In short: `modules/` holds one file per pipeline stage (1–15),
-`routes/` exposes them over HTTP, `ml/` isolates every AI/ML-touching piece,
-and `templates/` + `static/` render the live dashboard.
-
-## Resetting the demo
-
-```bash
-rm app.db
-python database/seed_data.py
 ```
+app.py                     Thin WSGI entrypoint (factory-delegated)
+application/               app factory (create_app) - testable under any WSGI server
+config/                    env-driven settings
+database/                  sqlite schema + seed + db access
+ml/                        behaviour model + manipulation-LLM wrappers
+modules/                   the 15 decision stages + shared pipeline
+routes/                    agent / dashboard / review blueprints
+security/                  crypto, ledger, JWT
+static/  templates/        frontend (dashboard.html, charts, CSS)
+scripts/                   run / seed / test / prepare-ci helpers
+tests/                     smoke + unit tests (unittest; pytest-compatible)
+docs/                      this repo's documentation
+requirements/              base.txt (runtime) + dev.txt (tests/CI)
+.github/workflows/ci.yml   CI: lint+test+boot smoke
+```
+
+## Docs
+
+| Document | What it answers |
+| --- | --- |
+| [docs/BUGS.md](docs/BUGS.md) | Every known bug, its observable effect, and severity |
+| [docs/FIXES.md](docs/FIXES.md) | Bug -> fix, and *why* the fix is correct |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Pipeline, modules, governor, data flow |
+| [docs/API.md](docs/API.md) | HTTP endpoints + auth + example payloads |
+| [docs/CHANGELOG.md](docs/CHANGELOG.md) | Version history |
+| [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) | How to contribute |
+| [docs/SECURITY.md](docs/SECURITY.md) | Security model, threats, trust boundaries |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | What is next |
+
+## License
+
+[MIT](LICENSE)

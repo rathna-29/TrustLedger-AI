@@ -3,9 +3,10 @@ For the hackathon prototype these signals are simulated via a small lookup
 table rather than a live chain explorer / KYC provider / market-data feed
 (see PROJECT_DOCUMENTATION.md Part 11). The integration point is clearly
 marked below for a production swap-in.
-"""
 
-import random
+Market/liquidity risk is derived deterministically from the destination id,
+so identical requests always yield identical risk scores.
+"""
 
 COUNTERPARTY_RISK_TIERS = {
     "whitelisted_known": 10,
@@ -20,6 +21,14 @@ PROTOCOL_RISK_TIERS = {
     "unaudited": 80,
     None: 20,  # no protocol involved (plain transfer)
 }
+
+
+def _stable_market_risk(destination_id: str) -> float:
+    """Deterministic pseudo-volatility in [5, 25] from the destination id."""
+    if not destination_id:
+        return 5.0
+    seed = sum(ord(c) for c in destination_id)
+    return round(5 + (seed % 21), 1)
 
 
 def evaluate_context(conn, destination_id: str) -> dict:
@@ -39,10 +48,10 @@ def evaluate_context(conn, destination_id: str) -> dict:
         protocol_risk = PROTOCOL_RISK_TIERS.get(row["protocol_risk_tier"], 20)
         blacklisted = tier == "flagged_blacklisted"
 
-    # --- Simulated market/liquidity risk -------------------------------
+    # --- Deterministic simulated market/liquidity risk -----------------------
     # PRODUCTION INTEGRATION POINT: replace with a real market-data /
-    # liquidity feed. Here we simulate mild, demo-safe volatility.
-    market_risk = round(random.uniform(5, 25), 1)
+    # liquidity feed. Stable per-destination so the demo is reproducible.
+    market_risk = _stable_market_risk(destination_id)
 
     return {
         "counterparty_tier": tier,
